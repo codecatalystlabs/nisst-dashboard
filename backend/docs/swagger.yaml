@@ -1,0 +1,778 @@
+openapi: 3.0.3
+info:
+  title: NISST Analytics API
+  version: 1.0.0
+servers:
+  - url: /api/v1
+components:
+  parameters:
+    Domain:
+      in: query
+      name: domain
+      schema:
+        type: string
+      description: Domain name filter (e.g., service delivery).
+    Subdomain:
+      in: query
+      name: subdomain
+      schema:
+        type: string
+      description: Subdomain slug/name filter (e.g., emergency-critical-care).
+    Period:
+      in: query
+      name: period
+      schema:
+        type: string
+      description: Reporting period filter (e.g., 2026Q1).
+    Region:
+      in: query
+      name: region
+      schema:
+        type: string
+      description: Region name filter.
+    District:
+      in: query
+      name: district
+      schema:
+        type: string
+      description: District name filter.
+    Facility:
+      in: query
+      name: facility
+      schema:
+        type: string
+      description: Facility name filter.
+    Level:
+      in: query
+      name: level
+      schema:
+        type: string
+      description: Facility level filter.
+    Limit:
+      in: query
+      name: limit
+      schema:
+        type: integer
+        default: 50
+      description: Maximum number of rows to return.
+  schemas:
+    ImportSummary:
+      type: object
+      properties:
+        batch_id: { type: string }
+        total_rows: { type: integer }
+        imported_rows: { type: integer }
+        duplicate_rows: { type: integer }
+        error_rows: { type: integer }
+        file_hash: { type: string }
+        status: { type: string }
+        dry_run: { type: boolean }
+    UploadBatch:
+      type: object
+      properties:
+        id: { type: string }
+        batch_code: { type: string }
+        file_type: { type: string }
+        file_name: { type: string }
+        file_hash: { type: string }
+        uploader: { type: string }
+        dry_run: { type: boolean }
+        status: { type: string }
+        total_rows: { type: integer }
+        imported_rows: { type: integer }
+        duplicate_rows: { type: integer }
+        error_rows: { type: integer }
+        created_at: { type: string, format: date-time }
+        processed_at: { type: string, format: date-time, nullable: true }
+    ImportError:
+      type: object
+      properties:
+        id: { type: string }
+        row_number: { type: integer }
+        source_column: { type: string }
+        error_code: { type: string }
+        error_detail: { type: string }
+        created_at: { type: string, format: date-time }
+    Summary:
+      type: object
+      properties:
+        overall_compliance: { type: number, format: float }
+        facilities_assessed: { type: integer }
+        unresolved_followups: { type: integer }
+    DomainScore:
+      type: object
+      properties:
+        domain: { type: string }
+        numerator: { type: number, format: float }
+        denominator: { type: number, format: float }
+        compliance: { type: number, format: float }
+    Ranking:
+      type: object
+      properties:
+        name: { type: string }
+        compliance: { type: number, format: float }
+    Trend:
+      type: object
+      properties:
+        period: { type: string }
+        compliance: { type: number, format: float }
+    QuestionPerformance:
+      type: object
+      properties:
+        question: { type: string }
+        compliance: { type: number, format: float }
+        observations: { type: integer }
+    Comment:
+      type: object
+      properties:
+        id: { type: string }
+        domain: { type: string }
+        question: { type: string }
+        text_value: { type: string }
+        created_at: { type: string, format: date-time }
+    Followup:
+      type: object
+      properties:
+        id: { type: string }
+        domain: { type: string }
+        challenge: { type: string }
+        intervention: { type: string }
+        responsibility: { type: string }
+        timelines: { type: string }
+        status: { type: string }
+        parent_key: { type: string }
+        created_at: { type: string, format: date-time }
+    LabelCount:
+      type: object
+      properties:
+        label: { type: string }
+        count: { type: integer }
+    ListEnvelope:
+      type: object
+      properties:
+        items:
+          type: array
+          items: {}
+    Overview:
+      type: object
+      properties:
+        summary:
+          $ref: '#/components/schemas/Summary'
+        domains:
+          type: array
+          items:
+            $ref: '#/components/schemas/DomainScore'
+    ReprocessAccepted:
+      type: object
+      properties:
+        status: { type: string, example: queued }
+        id: { type: string }
+paths:
+  /uploads/main:
+    post:
+      summary: Upload main CSV
+      parameters:
+        - in: query
+          name: dry_run
+          schema:
+            type: boolean
+            default: false
+          description: Validate import without persisting records.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                uploader:
+                  type: string
+                  example: data.officer
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Import summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportSummary'
+  /uploads/followups:
+    post:
+      summary: Upload follow-up CSV
+      parameters:
+        - in: query
+          name: dry_run
+          schema:
+            type: boolean
+            default: false
+          description: Validate import without persisting records.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                uploader:
+                  type: string
+                  example: data.officer
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Import summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportSummary'
+  /uploads:
+    get:
+      summary: List upload batches
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Upload batch list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListEnvelope'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/UploadBatch'
+  /uploads/{id}:
+    get:
+      summary: Get upload batch by ID
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Upload batch detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadBatch'
+  /uploads/{id}/errors:
+    get:
+      summary: Get row-level import errors for a batch
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Batch error list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListEnvelope'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/ImportError'
+  /uploads/{id}/reprocess:
+    post:
+      summary: Reprocess existing upload batch
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Reprocess accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReprocessAccepted'
+  /analytics/summary:
+    get:
+      summary: Overall KPI summary
+      parameters:
+        - $ref: '#/components/parameters/Domain'
+        - $ref: '#/components/parameters/Subdomain'
+        - $ref: '#/components/parameters/Period'
+        - $ref: '#/components/parameters/Region'
+        - $ref: '#/components/parameters/District'
+        - $ref: '#/components/parameters/Facility'
+        - $ref: '#/components/parameters/Level'
+      responses:
+        '200':
+          description: Summary object
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Summary'
+  /analytics/overview:
+    get:
+      summary: Combined overview payload
+      responses:
+        '200':
+          description: Summary plus domain aggregates
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Overview'
+  /analytics/domain-scores:
+    get:
+      summary: Get domain-level compliance
+      parameters:
+        - $ref: '#/components/parameters/Domain'
+        - $ref: '#/components/parameters/Subdomain'
+        - $ref: '#/components/parameters/Period'
+        - $ref: '#/components/parameters/Region'
+        - $ref: '#/components/parameters/District'
+        - $ref: '#/components/parameters/Facility'
+        - $ref: '#/components/parameters/Level'
+      responses:
+        '200':
+          description: Domain score list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListEnvelope'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/DomainScore'
+  /analytics/question-performance:
+    get:
+      summary: Question-level compliance performance
+      parameters:
+        - $ref: '#/components/parameters/Domain'
+        - $ref: '#/components/parameters/Subdomain'
+        - $ref: '#/components/parameters/Period'
+        - $ref: '#/components/parameters/Region'
+        - $ref: '#/components/parameters/District'
+        - $ref: '#/components/parameters/Facility'
+        - $ref: '#/components/parameters/Level'
+      responses:
+        '200':
+          description: Question performance list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListEnvelope'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/QuestionPerformance'
+  /analytics/facility-ranking:
+    get:
+      summary: Facility ranking by compliance
+      parameters:
+        - $ref: '#/components/parameters/Domain'
+        - $ref: '#/components/parameters/Subdomain'
+        - $ref: '#/components/parameters/Period'
+        - $ref: '#/components/parameters/Region'
+        - $ref: '#/components/parameters/District'
+        - $ref: '#/components/parameters/Facility'
+        - $ref: '#/components/parameters/Level'
+      responses:
+        '200':
+          description: Facility ranking list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListEnvelope'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Ranking'
+  /analytics/district-ranking:
+    get:
+      summary: District ranking by compliance
+      responses:
+        '200':
+          description: District ranking list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListEnvelope'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Ranking'
+  /analytics/region-ranking:
+    get:
+      summary: Region ranking by compliance
+      responses:
+        '200':
+          description: Region ranking list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListEnvelope'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Ranking'
+  /analytics/trends:
+    get:
+      summary: Period-over-period trends
+      parameters:
+        - $ref: '#/components/parameters/Domain'
+        - $ref: '#/components/parameters/Subdomain'
+        - $ref: '#/components/parameters/Period'
+        - $ref: '#/components/parameters/Region'
+        - $ref: '#/components/parameters/District'
+        - $ref: '#/components/parameters/Facility'
+        - $ref: '#/components/parameters/Level'
+      responses:
+        '200':
+          description: Trend series
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListEnvelope'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Trend'
+  /analytics/gaps:
+    get:
+      summary: Lowest-performing indicators
+      responses:
+        '200':
+          description: Gap list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListEnvelope'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/QuestionPerformance'
+  /analytics/comments:
+    get:
+      summary: Comment search and listing
+      parameters:
+        - in: query
+          name: q
+          schema:
+            type: string
+          description: Keyword search in comments.
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Comment list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListEnvelope'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Comment'
+  /analytics/followups:
+    get:
+      summary: Follow-up action list
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Follow-up list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListEnvelope'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Followup'
+  /analytics/followups/status:
+    get:
+      summary: Follow-up counts by status
+      responses:
+        '200':
+          description: Status aggregates
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListEnvelope'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/LabelCount'
+  /analytics/followups/by-domain:
+    get:
+      summary: Follow-up counts by domain
+      responses:
+        '200':
+          description: Domain aggregates
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListEnvelope'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/LabelCount'
+  /analytics/followups/by-responsibility:
+    get:
+      summary: Follow-up counts by responsibility owner
+      responses:
+        '200':
+          description: Responsibility aggregates
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListEnvelope'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/LabelCount'
+  /analytics/followups/timeline-buckets:
+    get:
+      summary: Follow-up counts by timeline bucket
+      responses:
+        '200':
+          description: Timeline bucket aggregates
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListEnvelope'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/LabelCount'
+  /analytics/download:
+    get:
+      summary: Download analytics export as CSV
+      responses:
+        '200':
+          description: CSV file
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+  /dashboard/kpis:
+    get:
+      summary: Dashboard KPI cards
+      responses:
+        '200':
+          description: KPI payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Summary'
+  /dashboard/charts/domain-compliance:
+    get:
+      summary: Domain compliance chart dataset
+      responses:
+        '200':
+          description: Chart dataset
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListEnvelope'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/DomainScore'
+  /dashboard/charts/region-comparison:
+    get:
+      summary: Region comparison chart dataset
+      responses:
+        '200':
+          description: Chart dataset
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListEnvelope'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Ranking'
+  /dashboard/charts/district-comparison:
+    get:
+      summary: District comparison chart dataset
+      responses:
+        '200':
+          description: Chart dataset
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListEnvelope'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Ranking'
+  /dashboard/charts/facility-level-comparison:
+    get:
+      summary: Facility comparison chart dataset
+      responses:
+        '200':
+          description: Chart dataset
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListEnvelope'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Ranking'
+  /dashboard/charts/question-heatmap:
+    get:
+      summary: Question heatmap dataset
+      responses:
+        '200':
+          description: Heatmap dataset
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListEnvelope'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/QuestionPerformance'
+  /dashboard/charts/followup-burden:
+    get:
+      summary: Follow-up burden chart dataset
+      responses:
+        '200':
+          description: Chart dataset
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListEnvelope'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/LabelCount'
+  /dashboard/tables/low-performing-facilities:
+    get:
+      summary: Low-performing facilities table
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Table data
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListEnvelope'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Ranking'
+  /dashboard/tables/unresolved-followups:
+    get:
+      summary: Unresolved follow-ups table
+      responses:
+        '200':
+          description: Table data
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListEnvelope'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Followup'
+  /dashboard/tables/recent-comments:
+    get:
+      summary: Recent comments table
+      parameters:
+        - in: query
+          name: q
+          schema:
+            type: string
+          description: Keyword search in comments.
+      responses:
+        '200':
+          description: Table data
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListEnvelope'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Comment'
