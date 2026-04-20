@@ -156,14 +156,15 @@ func (s *ImportService) ProcessUpload(ctx context.Context, in ImportInput) (Impo
 
 	err = s.repos.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		batch := uploadBatchModel{
-			ID:        batchID,
-			BatchCode: batchCode,
-			FileType:  in.FileType,
-			FileName:  in.FileName,
-			FileHash:  fileHash,
-			Uploader:  in.Uploader,
-			DryRun:    in.DryRun,
-			Status:    "processing",
+			ID:            batchID,
+			BatchCode:     batchCode,
+			FileType:      in.FileType,
+			FileName:      in.FileName,
+			FileHash:      fileHash,
+			Uploader:      in.Uploader,
+			DryRun:        in.DryRun,
+			Status:        "processing",
+			ImportSummary: []byte("{}"),
 		}
 		if err := tx.Create(&batch).Error; err != nil {
 			return err
@@ -245,7 +246,7 @@ func (s *ImportService) ProcessUpload(ctx context.Context, in ImportInput) (Impo
 }
 
 func (s *ImportService) processMainRow(tx *gorm.DB, dryRun bool, batchID string, row map[string]string) error {
-	sourceKey := strings.TrimSpace(row["meta-instanceID"])
+	sourceKey := strings.TrimSpace(row["meta-instanceid"])
 	if sourceKey == "" {
 		return errors.New("meta-instanceID is required")
 	}
@@ -282,18 +283,18 @@ func (s *ImportService) processMainRow(tx *gorm.DB, dryRun bool, batchID string,
 		  gen_random_uuid(), ?, ?, NULLIF(?, '')::timestamptz, ?, ?, ?, ?, ?, ?::jsonb
 		)
 		RETURNING id
-	`, batchID, sourceKey, row["SubmissionDate"], row["period"], regionID, districtID, facilityID, row["level"], toJSON(row)).Scan(&recordID).Error; err != nil {
+	`, batchID, sourceKey, row["submissiondate"], row["period"], regionID, districtID, facilityID, row["level"], toJSON(row)).Scan(&recordID).Error; err != nil {
 		return err
 	}
 	return s.normalizeMainRow(tx, recordID, row)
 }
 
 func (s *ImportService) processFollowupRow(tx *gorm.DB, dryRun bool, batchID string, row map[string]string) error {
-	parentKey := strings.TrimSpace(row["PARENT_KEY"])
+	parentKey := strings.TrimSpace(row["parent_key"])
 	if parentKey == "" {
 		return errors.New("PARENT_KEY is required")
 	}
-	key := strings.TrimSpace(row["KEY"])
+	key := strings.TrimSpace(row["key"])
 	if key != "" {
 		var existing int64
 		if err := tx.Table("follow_up_actions").Where("source_key = ?", key).Count(&existing).Error; err != nil {
@@ -369,13 +370,13 @@ func (s *ImportService) logImportError(tx *gorm.DB, batchID string, rowNum int, 
 
 func (s *ImportService) normalizeMainRow(tx *gorm.DB, recordID string, row map[string]string) error {
 	baseCols := map[string]bool{
-		"SubmissionDate":  true,
+		"submissiondate":  true,
 		"facility_name":   true,
 		"level":           true,
 		"region":          true,
 		"district":        true,
 		"period":          true,
-		"meta-instanceID": true,
+		"meta-instanceid": true,
 	}
 	for col, raw := range row {
 		if baseCols[col] {
@@ -518,10 +519,11 @@ func (s *ImportService) GetBatchErrors(ctx context.Context, id string) ([]Import
 func toRowMap(headers, row []string) map[string]string {
 	out := make(map[string]string, len(headers))
 	for i, h := range headers {
+		key := normalizeHeader(h)
 		if i < len(row) {
-			out[h] = strings.TrimSpace(row[i])
+			out[key] = strings.TrimSpace(row[i])
 		} else {
-			out[h] = ""
+			out[key] = ""
 		}
 	}
 	return out
@@ -548,12 +550,22 @@ func validateHeaders(fileType string, headers []string) error {
 	if len(headers) < len(expected) {
 		return errors.New("invalid header count")
 	}
-	for i, h := range expected {
-		if headers[i] != h {
-			return errors.New("invalid header: " + headers[i])
+	seen := make(map[string]bool, len(headers))
+	for _, h := range headers {
+		seen[normalizeHeader(h)] = true
+	}
+	for _, required := range expected {
+		if !seen[normalizeHeader(required)] {
+			return errors.New("missing required header: " + required)
 		}
 	}
 	return nil
+}
+
+func normalizeHeader(h string) string {
+	h = strings.TrimSpace(h)
+	h = strings.TrimPrefix(h, "\ufeff")
+	return strings.ToLower(h)
 }
 
 type SummaryDTO struct {
