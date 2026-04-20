@@ -1,4 +1,8 @@
+"use client";
+
 import Link from "next/link";
+import type { Route } from "next";
+import { useSearchParams } from "next/navigation";
 
 const nav = [
   ["Overview", "/"],
@@ -16,12 +20,14 @@ const nav = [
 ] as const;
 
 export function SidebarNav() {
+  const searchParams = useSearchParams();
+  const query = searchParams.toString();
   return (
     <aside className="bg-navy text-white p-6 sticky top-0 h-screen">
       <h1 className="text-lg font-semibold tracking-wide">NISST MIDAS</h1>
       <nav className="mt-6 space-y-2">
         {nav.map(([label, href]) => (
-          <Link key={href} href={href} className="block rounded-md px-3 py-2 text-sm hover:bg-white/10">{label}</Link>
+          <Link key={href} href={`${href}${query ? `?${query}` : ""}` as Route} className="block rounded-md px-3 py-2 text-sm hover:bg-white/10">{label}</Link>
         ))}
       </nav>
     </aside>

@@ -3,6 +3,9 @@ import { DomainComplianceChart } from "@/components/charts/domain-compliance-cha
 import { TrendLineChart } from "@/components/charts/trend-line-chart";
 import { QuestionPerformanceTable } from "@/components/tables/question-performance-table";
 import { apiGet } from "@/lib/api";
+import { buildFilterQuery, type SearchParamMap } from "@/lib/filters";
+
+export const dynamic = "force-dynamic";
 
 type Summary = {
   overall_compliance: number;
@@ -25,35 +28,52 @@ type QuestionPerf = {
   compliance: number;
 };
 
-async function loadOverview() {
-  try {
-    const [summary, domainRes, trendRes, questionRes, gapsRes] = await Promise.all([
-      apiGet<Summary>("/analytics/summary"),
-      apiGet<{ items: DomainScore[] }>("/analytics/domain-scores"),
-      apiGet<{ items: Trend[] }>("/analytics/trends"),
-      apiGet<{ items: QuestionPerf[] }>("/analytics/question-performance"),
-      apiGet<{ items: QuestionPerf[] }>("/analytics/gaps"),
-    ]);
+async function loadOverview(searchParams?: SearchParamMap) {
+  const q = buildFilterQuery(searchParams);
+  const base = {
+    summary: { overall_compliance: 0, facilities_assessed: 0, unresolved_followups: 0 },
+    domainRes: { items: [] as DomainScore[] },
+    trendRes: { items: [] as Trend[] },
+    questionRes: { items: [] as QuestionPerf[] },
+    gapsRes: { items: [] as QuestionPerf[] },
+    errors: [] as string[],
+  };
 
-    return { summary, domainRes, trendRes, questionRes, gapsRes };
-  } catch {
-    return {
-      summary: { overall_compliance: 0, facilities_assessed: 0, unresolved_followups: 0 },
-      domainRes: { items: [] as DomainScore[] },
-      trendRes: { items: [] as Trend[] },
-      questionRes: { items: [] as QuestionPerf[] },
-      gapsRes: { items: [] as QuestionPerf[] },
-    };
-  }
+  const jobs = await Promise.allSettled([
+    apiGet<Summary>(`/analytics/summary${q}`),
+    apiGet<{ items: DomainScore[] }>(`/analytics/domain-scores${q}`),
+    apiGet<{ items: Trend[] }>(`/analytics/trends${q}`),
+    apiGet<{ items: QuestionPerf[] }>(`/analytics/question-performance${q}`),
+    apiGet<{ items: QuestionPerf[] }>(`/analytics/gaps${q}`),
+  ]);
+
+  if (jobs[0].status === "fulfilled") base.summary = jobs[0].value;
+  else base.errors.push("summary");
+  if (jobs[1].status === "fulfilled") base.domainRes = jobs[1].value;
+  else base.errors.push("domain-scores");
+  if (jobs[2].status === "fulfilled") base.trendRes = jobs[2].value;
+  else base.errors.push("trends");
+  if (jobs[3].status === "fulfilled") base.questionRes = jobs[3].value;
+  else base.errors.push("question-performance");
+  if (jobs[4].status === "fulfilled") base.gapsRes = jobs[4].value;
+  else base.errors.push("gaps");
+
+  return base;
 }
 
-export default async function OverviewPage() {
-  const { summary, domainRes, trendRes, questionRes, gapsRes } = await loadOverview();
+export default async function OverviewPage({ searchParams }: { searchParams: Promise<SearchParamMap> }) {
+  const resolved = await searchParams;
+  const { summary, domainRes, trendRes, questionRes, gapsRes, errors } = await loadOverview(resolved);
   const weakest = gapsRes.items[0];
 
   return (
     <div className="space-y-6">
       <h2 className="text-2xl font-semibold text-navy">Executive Overview</h2>
+      {errors.length > 0 ? (
+        <div className="rounded-md border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-800">
+          Some analytics sources failed to load: {errors.join(", ")}.
+        </div>
+      ) : null}
       <section className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         <KpiCard title="Overall Compliance" value={`${(summary.overall_compliance * 100).toFixed(1)}%`} />
         <KpiCard title="Facilities Assessed" value={`${summary.facilities_assessed}`} />

@@ -10,6 +10,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -368,6 +369,87 @@ func (s *ImportService) logImportError(tx *gorm.DB, batchID string, rowNum int, 
 	`, batchID, rowNum, sourceColumn, code, detail).Error
 }
 
+// domainCodeToUUID caches domains.id by domains.code (stable across imports).
+var domainCodeToUUID sync.Map
+
+func domainIDForCode(tx *gorm.DB, code string) (string, error) {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return "", nil
+	}
+	if v, ok := domainCodeToUUID.Load(code); ok {
+		return v.(string), nil
+	}
+	var id string
+	if err := tx.Raw(`SELECT id::text FROM domains WHERE code = ? LIMIT 1`, code).Scan(&id).Error; err != nil {
+		return "", err
+	}
+	if id != "" {
+		domainCodeToUUID.Store(code, id)
+	}
+	return id, nil
+}
+
+// columnStemForDomain strips ODK group paths and comment suffixes so we can match lg_q1 from foo/lg_q1_comment.
+func columnStemForDomain(col string) string {
+	c := strings.ToLower(strings.TrimSpace(col))
+	if idx := strings.LastIndex(c, "/"); idx >= 0 {
+		c = c[idx+1:]
+	}
+	if strings.HasSuffix(c, "_comment") {
+		c = strings.TrimSuffix(c, "_comment")
+	}
+	if strings.HasSuffix(c, "_recommendation") {
+		c = strings.TrimSuffix(c, "_recommendation")
+	}
+	return c
+}
+
+// inferDomainCodeFromSourceColumn maps CSV/XLSForm column prefixes to seed domain codes (D1–D9).
+func inferDomainCodeFromSourceColumn(col string) string {
+	c := columnStemForDomain(col)
+	if c == "" {
+		return ""
+	}
+	for i := 1; i <= 9; i++ {
+		prefix := fmt.Sprintf("d%d_", i)
+		if strings.HasPrefix(c, prefix) {
+			return fmt.Sprintf("D%d", i)
+		}
+	}
+	// Longer prefixes first where they share a common prefix.
+	type rule struct{ prefix, code string }
+	rules := []rule{
+		{"hrh_", "D2"},
+		{"mhs_", "D3"},
+		{"him_", "D5"},
+		{"hin_", "D5"},
+		{"infra_", "D6"},
+		{"srv_", "D7"},
+		{"serv_", "D7"},
+		{"qoc_", "D8"},
+		{"qos_", "D8"},
+		{"fua_", "D9"},
+		{"lg_", "D1"},
+		{"ldr_", "D1"},
+		{"hr_", "D2"},
+		{"med_", "D3"},
+		{"ms_", "D3"},
+		{"hf_", "D4"},
+		{"fin_", "D4"},
+		{"inf_", "D6"},
+		{"sd_", "D7"},
+		{"qc_", "D8"},
+		{"fu_", "D9"},
+	}
+	for _, r := range rules {
+		if strings.HasPrefix(c, r.prefix) {
+			return r.code
+		}
+	}
+	return ""
+}
+
 func (s *ImportService) normalizeMainRow(tx *gorm.DB, recordID string, row map[string]string) error {
 	baseCols := map[string]bool{
 		"submissiondate":  true,
@@ -419,12 +501,33 @@ func (s *ImportService) normalizeMainRow(tx *gorm.DB, recordID string, row map[s
 }
 
 func (s *ImportService) ensureQuestion(tx *gorm.DB, sourceColumn string) (string, error) {
-	var id string
-	if err := tx.Raw(`SELECT id FROM questions WHERE source_column = ?`, sourceColumn).Scan(&id).Error; err != nil {
+	type qRow struct {
+		ID       string  `gorm:"column:id"`
+		DomainID *string `gorm:"column:domain_id"`
+	}
+	var existing qRow
+	if err := tx.Raw(
+		`SELECT id::text AS id, domain_id::text AS domain_id FROM questions WHERE source_column = ? LIMIT 1`,
+		sourceColumn,
+	).Scan(&existing).Error; err != nil {
 		return "", err
 	}
-	if id != "" {
-		return id, nil
+	if existing.ID != "" {
+		if existing.DomainID == nil || strings.TrimSpace(*existing.DomainID) == "" {
+			code := inferDomainCodeFromSourceColumn(sourceColumn)
+			if code != "" {
+				did, err := domainIDForCode(tx, code)
+				if err != nil {
+					return "", err
+				}
+				if did != "" {
+					if err := tx.Exec(`UPDATE questions SET domain_id = ?::uuid WHERE id = ?::uuid`, did, existing.ID).Error; err != nil {
+						return "", err
+					}
+				}
+			}
+		}
+		return existing.ID, nil
 	}
 	qType := "text"
 	scoreable := false
@@ -434,11 +537,26 @@ func (s *ImportService) ensureQuestion(tx *gorm.DB, sourceColumn string) (string
 		qType = "select_one yes_no"
 		scoreable = true
 	}
-	if err := tx.Raw(`
-		INSERT INTO questions (id, source_column, label, question_type, scoreable, option_list, display_order)
-		VALUES (gen_random_uuid(), ?, ?, ?, ?, ?, 0)
-		RETURNING id
-	`, sourceColumn, sourceColumn, qType, scoreable, nullableOptionList(scoreable)).Scan(&id).Error; err != nil {
+	var id string
+	code := inferDomainCodeFromSourceColumn(sourceColumn)
+	did, err := domainIDForCode(tx, code)
+	if err != nil {
+		return "", err
+	}
+	if did != "" {
+		err = tx.Raw(`
+			INSERT INTO questions (id, source_column, label, question_type, scoreable, option_list, display_order, domain_id)
+			VALUES (gen_random_uuid(), ?, ?, ?, ?, ?, 0, ?::uuid)
+			RETURNING id::text
+		`, sourceColumn, sourceColumn, qType, scoreable, nullableOptionList(scoreable), did).Scan(&id).Error
+	} else {
+		err = tx.Raw(`
+			INSERT INTO questions (id, source_column, label, question_type, scoreable, option_list, display_order)
+			VALUES (gen_random_uuid(), ?, ?, ?, ?, ?, 0)
+			RETURNING id::text
+		`, sourceColumn, sourceColumn, qType, scoreable, nullableOptionList(scoreable)).Scan(&id).Error
+	}
+	if err != nil {
 		return "", err
 	}
 	return id, nil
@@ -626,6 +744,10 @@ type FollowupDTO struct {
 type CountByLabelDTO struct {
 	Label string `json:"label"`
 	Count int64  `json:"count"`
+}
+
+type MetadataOptionDTO struct {
+	Value string `json:"value"`
 }
 
 type AnalyticsFilter struct {
@@ -997,6 +1119,99 @@ func nullableOptionList(scoreable bool) any {
 		return "yes_no"
 	}
 	return nil
+}
+
+func (s *MetadataService) Regions(ctx context.Context, q string, limit int) ([]MetadataOptionDTO, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 25
+	}
+	pattern := "%" + strings.TrimSpace(q) + "%"
+	var out []MetadataOptionDTO
+	err := s.repos.DB.WithContext(ctx).Raw(`
+		SELECT name AS value
+		FROM regions
+		WHERE (? = '%%' OR name ILIKE ?)
+		ORDER BY name
+		LIMIT ?
+	`, pattern, pattern, limit).Scan(&out).Error
+	return out, err
+}
+
+func (s *MetadataService) Districts(ctx context.Context, q, region string, limit int) ([]MetadataOptionDTO, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 25
+	}
+	pattern := "%" + strings.TrimSpace(q) + "%"
+	region = strings.TrimSpace(region)
+	var out []MetadataOptionDTO
+	err := s.repos.DB.WithContext(ctx).Raw(`
+		SELECT d.name AS value
+		FROM districts d
+		LEFT JOIN regions r ON r.id = d.region_id
+		WHERE (? = '%%' OR d.name ILIKE ?)
+		  AND (? = '' OR LOWER(COALESCE(r.name, '')) = LOWER(?))
+		ORDER BY d.name
+		LIMIT ?
+	`, pattern, pattern, region, region, limit).Scan(&out).Error
+	return out, err
+}
+
+func (s *MetadataService) Facilities(ctx context.Context, q, region, district string, limit int) ([]MetadataOptionDTO, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 25
+	}
+	pattern := "%" + strings.TrimSpace(q) + "%"
+	region = strings.TrimSpace(region)
+	district = strings.TrimSpace(district)
+	var out []MetadataOptionDTO
+	err := s.repos.DB.WithContext(ctx).Raw(`
+		SELECT f.name AS value
+		FROM facilities f
+		LEFT JOIN regions r ON r.id = f.region_id
+		LEFT JOIN districts d ON d.id = f.district_id
+		WHERE (? = '%%' OR f.name ILIKE ?)
+		  AND (? = '' OR LOWER(COALESCE(r.name, '')) = LOWER(?))
+		  AND (? = '' OR LOWER(COALESCE(d.name, '')) = LOWER(?))
+		ORDER BY f.name
+		LIMIT ?
+	`, pattern, pattern, region, region, district, district, limit).Scan(&out).Error
+	return out, err
+}
+
+func (s *MetadataService) Periods(ctx context.Context, q string, limit int) ([]MetadataOptionDTO, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 25
+	}
+	pattern := "%" + strings.TrimSpace(q) + "%"
+	var out []MetadataOptionDTO
+	err := s.repos.DB.WithContext(ctx).Raw(`
+		SELECT DISTINCT sr.period AS value
+		FROM supervision_records sr
+		WHERE sr.period IS NOT NULL
+		  AND sr.period <> ''
+		  AND (? = '%%' OR sr.period ILIKE ?)
+		ORDER BY sr.period
+		LIMIT ?
+	`, pattern, pattern, limit).Scan(&out).Error
+	return out, err
+}
+
+func (s *MetadataService) Levels(ctx context.Context, q string, limit int) ([]MetadataOptionDTO, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 25
+	}
+	pattern := "%" + strings.TrimSpace(q) + "%"
+	var out []MetadataOptionDTO
+	err := s.repos.DB.WithContext(ctx).Raw(`
+		SELECT DISTINCT sr.level AS value
+		FROM supervision_records sr
+		WHERE sr.level IS NOT NULL
+		  AND sr.level <> ''
+		  AND (? = '%%' OR sr.level ILIKE ?)
+		ORDER BY sr.level
+		LIMIT ?
+	`, pattern, pattern, limit).Scan(&out).Error
+	return out, err
 }
 
 func buildResponseFilterClause(f AnalyticsFilter) (string, []any) {

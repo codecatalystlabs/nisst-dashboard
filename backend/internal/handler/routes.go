@@ -12,7 +12,7 @@ import (
 func Register(app *fiber.App, s *service.Registry) {
 	api := app.Group("/api/v1")
 	u := NewUploadHandler(s.Import)
-	m := NewMetadataHandler()
+	m := NewMetadataHandler(s.Metadata)
 	r := NewRecordHandler()
 	a := NewAnalyticsHandler(s.Analytics)
 	d := NewDashboardHandler(s.Analytics)
@@ -33,6 +33,7 @@ func Register(app *fiber.App, s *service.Registry) {
 	api.Get("/metadata/regions", m.Regions)
 	api.Get("/metadata/districts", m.Districts)
 	api.Get("/metadata/periods", m.Periods)
+	api.Get("/metadata/levels", m.Levels)
 
 	api.Get("/records", r.List)
 	api.Get("/records/:id", r.Get)
