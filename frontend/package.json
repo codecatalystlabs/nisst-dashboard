@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "clean": "node -e \"try{require('fs').rmSync('.next',{recursive:true,force:true})}catch(e){} try{require('fs').rmSync('node_modules/.cache',{recursive:true,force:true})}catch(e){}\""
   },
   "dependencies": {
     "next": "15.3.0",

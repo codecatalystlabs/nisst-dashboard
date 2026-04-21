@@ -49,14 +49,22 @@ async function loadOverview(searchParams?: SearchParamMap) {
 
   if (jobs[0].status === "fulfilled") base.summary = jobs[0].value;
   else base.errors.push("summary");
-  if (jobs[1].status === "fulfilled") base.domainRes = jobs[1].value;
-  else base.errors.push("domain-scores");
-  if (jobs[2].status === "fulfilled") base.trendRes = jobs[2].value;
-  else base.errors.push("trends");
-  if (jobs[3].status === "fulfilled") base.questionRes = jobs[3].value;
-  else base.errors.push("question-performance");
-  if (jobs[4].status === "fulfilled") base.gapsRes = jobs[4].value;
-  else base.errors.push("gaps");
+  if (jobs[1].status === "fulfilled") {
+    const items = jobs[1].value.items;
+    base.domainRes = { items: Array.isArray(items) ? items : [] };
+  } else base.errors.push("domain-scores");
+  if (jobs[2].status === "fulfilled") {
+    const items = jobs[2].value.items;
+    base.trendRes = { items: Array.isArray(items) ? items : [] };
+  } else base.errors.push("trends");
+  if (jobs[3].status === "fulfilled") {
+    const items = jobs[3].value.items;
+    base.questionRes = { items: Array.isArray(items) ? items : [] };
+  } else base.errors.push("question-performance");
+  if (jobs[4].status === "fulfilled") {
+    const items = jobs[4].value.items;
+    base.gapsRes = { items: Array.isArray(items) ? items : [] };
+  } else base.errors.push("gaps");
 
   return base;
 }
@@ -64,7 +72,11 @@ async function loadOverview(searchParams?: SearchParamMap) {
 export default async function OverviewPage({ searchParams }: { searchParams: Promise<SearchParamMap> }) {
   const resolved = await searchParams;
   const { summary, domainRes, trendRes, questionRes, gapsRes, errors } = await loadOverview(resolved);
-  const weakest = gapsRes.items[0];
+  const domainItems = Array.isArray(domainRes.items) ? domainRes.items : [];
+  const trendItems = Array.isArray(trendRes.items) ? trendRes.items : [];
+  const questionItems = Array.isArray(questionRes.items) ? questionRes.items : [];
+  const gapsItems = Array.isArray(gapsRes.items) ? gapsRes.items : [];
+  const weakest = gapsItems[0];
 
   return (
     <div className="space-y-6">
@@ -84,11 +96,11 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
         />
       </section>
       <section className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-        <DomainComplianceChart data={domainRes.items.map((d) => ({ domain: d.domain, score: d.compliance }))} />
-        <TrendLineChart data={trendRes.items.map((t) => ({ period: t.period, score: t.compliance }))} />
+        <DomainComplianceChart data={domainItems.map((d) => ({ domain: d.domain, score: d.compliance }))} />
+        <TrendLineChart data={trendItems.map((t) => ({ period: t.period, score: t.compliance }))} />
       </section>
       <QuestionPerformanceTable
-        rows={questionRes.items.slice(0, 20).map((q) => ({ question: q.question, domain: "Cross-domain", score: q.compliance }))}
+        rows={questionItems.slice(0, 20).map((q) => ({ question: q.question, domain: "Cross-domain", score: q.compliance }))}
       />
     </div>
   );

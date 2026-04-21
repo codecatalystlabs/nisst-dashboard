@@ -2,6 +2,7 @@ package handler
 
 import (
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -76,9 +77,18 @@ func Register(app *fiber.App, s *service.Registry) {
 		}
 		return c.Type("application/x-yaml").Send(docs.SwaggerYAML)
 	}
+	serveOpenAPIHEAD := func(c *fiber.Ctx) error {
+		if len(docs.SwaggerYAML) == 0 {
+			return fiber.NewError(fiber.StatusInternalServerError, "swagger spec not embedded")
+		}
+		c.Set("Content-Type", "application/x-yaml")
+		c.Set("Content-Length", strconv.Itoa(len(docs.SwaggerYAML)))
+		return c.SendStatus(fiber.StatusOK)
+	}
 
 	// Served under the API prefix so reverse proxies that only forward /api/* still reach the spec.
 	api.Get("/openapi.yaml", serveOpenAPI)
+	api.Head("/openapi.yaml", serveOpenAPIHEAD)
 
 	specURL := strings.TrimSpace(os.Getenv("SWAGGER_SPEC_URL"))
 	if specURL == "" {
@@ -87,6 +97,7 @@ func Register(app *fiber.App, s *service.Registry) {
 
 	// Backward-compatible path for bookmarks and older Swagger UI configs.
 	app.Get("/swagger-spec.yaml", serveOpenAPI)
+	app.Head("/swagger-spec.yaml", serveOpenAPIHEAD)
 
 	app.Get("/swagger/*", swagger.New(swagger.Config{
 		URL:         specURL,

@@ -1,9 +1,11 @@
+import { Suspense } from "react";
+import { CsvUploadPanel } from "@/components/uploads/csv-upload-panel";
 import { apiGet, type UploadBatchItem } from "@/lib/api";
 
 async function loadUploads() {
   try {
     const res = await apiGet<{ items: UploadBatchItem[] }>("/uploads?limit=100");
-    return res.items;
+    return Array.isArray(res.items) ? res.items : [];
   } catch {
     return [] as UploadBatchItem[];
   }
@@ -15,7 +17,15 @@ export default async function UploadsPage() {
     <div className="space-y-6">
       <div>
         <h2 className="text-2xl font-semibold text-navy">Data Uploads</h2>
-        <p className="text-slate-600">Main and follow-up import batches with audit outcomes.</p>
+        <p className="text-slate-600">Upload CSVs to the API, then review batches and row-level errors below.</p>
+      </div>
+
+      <Suspense fallback={<div className="text-sm text-slate-500">Loading upload tools…</div>}>
+        <CsvUploadPanel />
+      </Suspense>
+
+      <div>
+        <h3 className="text-lg font-semibold text-navy mb-2">Recent batches</h3>
       </div>
 
       <div className="bg-white rounded-xl shadow-midas p-4 overflow-auto">
