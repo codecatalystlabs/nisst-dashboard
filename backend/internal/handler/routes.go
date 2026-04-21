@@ -2,10 +2,11 @@ package handler
 
 import (
 	"os"
-	"path/filepath"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/swagger"
+	"nisst/docs"
 	"nisst/internal/service"
 )
 
@@ -69,42 +70,26 @@ func Register(app *fiber.App, s *service.Registry) {
 	api.Get("/dashboard/tables/unresolved-followups", d.UnresolvedFollowups)
 	api.Get("/dashboard/tables/recent-comments", d.RecentComments)
 
-	app.Get("/swagger-spec.yaml", func(c *fiber.Ctx) error {
-		specPath, err := resolveSwaggerSpecPath()
-		if err != nil {
-			return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+	serveOpenAPI := func(c *fiber.Ctx) error {
+		if len(docs.SwaggerYAML) == 0 {
+			return fiber.NewError(fiber.StatusInternalServerError, "swagger spec not embedded")
 		}
-		return c.Type("yaml").SendFile(specPath)
-	})
+		return c.Type("application/x-yaml").Send(docs.SwaggerYAML)
+	}
+
+	// Served under the API prefix so reverse proxies that only forward /api/* still reach the spec.
+	api.Get("/openapi.yaml", serveOpenAPI)
+
+	specURL := strings.TrimSpace(os.Getenv("SWAGGER_SPEC_URL"))
+	if specURL == "" {
+		specURL = "/api/v1/openapi.yaml"
+	}
+
+	// Backward-compatible path for bookmarks and older Swagger UI configs.
+	app.Get("/swagger-spec.yaml", serveOpenAPI)
+
 	app.Get("/swagger/*", swagger.New(swagger.Config{
-		URL:         "/swagger-spec.yaml",
+		URL:         specURL,
 		DeepLinking: true,
 	}))
-}
-
-func resolveSwaggerSpecPath() (string, error) {
-	candidates := []string{
-		"docs/swagger.yaml",
-		"../docs/swagger.yaml",
-		"../../docs/swagger.yaml",
-		"../../../docs/swagger.yaml",
-	}
-	if wd, err := os.Getwd(); err == nil {
-		dir := wd
-		for i := 0; i < 6; i++ {
-			candidates = append(candidates, filepath.Join(dir, "docs", "swagger.yaml"))
-			parent := filepath.Dir(dir)
-			if parent == dir {
-				break
-			}
-			dir = parent
-		}
-	}
-	for _, p := range candidates {
-		clean := filepath.Clean(p)
-		if _, err := os.Stat(clean); err == nil {
-			return clean, nil
-		}
-	}
-	return "", os.ErrNotExist
 }
